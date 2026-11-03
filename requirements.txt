@@ -1,0 +1,4 @@
+skyfield==1.55
+streamlit==1.66.1
+pandas==2.3.3
+
