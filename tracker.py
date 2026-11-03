@@ -12,12 +12,13 @@ import csv
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from skyfield.api import Loader, wgs84
+from skyfield.api import EarthSatellite, Loader, wgs84
 
 
 TLE_URL = "https://celestrak.org/NORAD/elements/gp.php?GROUP=weather&FORMAT=tle"
 DEFAULT_SATELLITE = "METEOR-M 2"
 PROJECT_DIR = Path(__file__).resolve().parent
+FALLBACK_TLE_FILE = PROJECT_DIR / "satellite_data" / "meteor_m_2.tle"
 loader = Loader(str(PROJECT_DIR / "data"))
 timescale = loader.timescale()
 
@@ -27,7 +28,7 @@ def add_observer_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--longitude", type=float, required=True, help="Degrees east; west is negative.")
     parser.add_argument("--elevation-m", type=float, default=0.0, help="Ground-station elevation above sea level in metres.")
     parser.add_argument("--satellite", default=DEFAULT_SATELLITE, help=f"CelesTrak satellite name. Default: {DEFAULT_SATELLITE}")
-    parser.add_argument("--refresh-tle", action="store_true", help="Download fresh orbital elements from CelesTrak.")
+    parser.add_argument("--refresh-tle", action="store_true", help="Try downloading fresh orbital elements from CelesTrak.")
 
 
 def as_utc_datetime(skyfield_time) -> datetime:
@@ -51,16 +52,40 @@ def parse_utc(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def load_satellite(name: str, refresh_tle: bool):
-    satellites = loader.tle_file(TLE_URL, reload=refresh_tle)
+def load_bundled_satellite(name: str):
+    """Load the included METEOR-M 2 element set when the online feed is unavailable."""
+    if not FALLBACK_TLE_FILE.exists():
+        raise FileNotFoundError(f"Bundled orbital data is missing: {FALLBACK_TLE_FILE}")
+
+    lines = [line.strip() for line in FALLBACK_TLE_FILE.read_text(encoding="utf-8").splitlines() if line.strip()]
     wanted = name.casefold()
+
+    for index, line in enumerate(lines):
+        if line.casefold() != wanted:
+            continue
+        if index + 2 >= len(lines) or not lines[index + 1].startswith("1 ") or not lines[index + 2].startswith("2 "):
+            raise ValueError(f"Bundled orbital data for '{name}' is incomplete.")
+        return EarthSatellite(lines[index + 1], lines[index + 2], lines[index], timescale)
+
+    raise ValueError(f"Satellite '{name}' is not included in the bundled orbital data.")
+
+
+def load_satellite(name: str, refresh_tle: bool):
+    """Load current data when requested; otherwise use reliable bundled data."""
+    wanted = name.casefold()
+    if not refresh_tle:
+        return load_bundled_satellite(name)
+
+    try:
+        satellites = loader.tle_file(TLE_URL, reload=True)
+    except OSError:
+        return load_bundled_satellite(name)
 
     for satellite in satellites:
         if satellite.name.casefold() == wanted:
             return satellite
 
-    names = ", ".join(satellite.name for satellite in satellites)
-    raise ValueError(f"Satellite '{name}' was not found. Available names: {names}")
+    return load_bundled_satellite(name)
 
 
 def build_observer(args: argparse.Namespace):
