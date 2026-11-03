@@ -1,0 +1,12 @@
+# Python virtual environment and bytecode
+.venv/
+.pip-temp/
+__pycache__/
+*.py[cod]
+
+# Downloaded orbital elements; refresh these instead of committing stale data
+data/
+
+# Generated tracking logs
+output/
+
