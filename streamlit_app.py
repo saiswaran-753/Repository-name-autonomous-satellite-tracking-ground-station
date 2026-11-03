@@ -85,7 +85,8 @@ with st.sidebar:
     search_hours = st.slider("Search window (hours)", min_value=12, max_value=72, value=48, step=12)
     minimum_elevation = st.slider("Minimum elevation (degrees)", min_value=0, max_value=30, value=10)
     sample_seconds = st.select_slider("Sample interval (seconds)", options=[1, 5, 10, 15, 30], value=5)
-    refresh_tle = st.checkbox("Download fresh orbital data", value=True)
+    refresh_tle = st.checkbox("Try to download current orbital data", value=False)
+    st.caption("The dashboard uses bundled METEOR-M 2 data when the live CelesTrak feed is unavailable.")
     predict = st.button("Predict next pass", type="primary", use_container_width=True)
 
 
