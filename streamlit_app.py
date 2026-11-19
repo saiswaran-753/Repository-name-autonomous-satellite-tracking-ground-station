@@ -18,6 +18,43 @@ st.set_page_config(
 st.title("🛰️ Autonomous Satellite Tracking Ground Station")
 st.caption("Software prototype: live pass prediction and simulated antenna commands")
 
+st.info(
+    "**Simulation prototype only.** This project calculates predicted satellite geometry "
+    "and simulates antenna behaviour. It does not control a physical antenna, receive RF "
+    "signals, or decode satellite images."
+)
+
+with st.expander("Completed software-simulation work", expanded=True):
+    st.markdown(
+        """
+**Orbit and pass prediction**
+
+- Uses **Skyfield** with **CelesTrak TLE** orbital data to calculate satellite
+  azimuth, elevation and range.
+- Predicts **AOS** (acquisition of signal) and **LOS** (loss of signal) using a
+  configurable minimum elevation.
+
+**Pass and antenna simulation**
+
+- Produces 5-second pass samples with 60-second buffers before AOS and after LOS.
+- Simulates configurable pan/tilt home positions, motor speeds, pre-positioning
+  and readiness checks.
+- Models the autonomous lifecycle:
+  `WAITING → PRE-POSITIONING → READINESS CHECK → ACQUIRING → TRACKING → LOSS OF SIGNAL → RETURNING HOME → HOME`.
+
+**Recorded simulation outputs and checks**
+
+- Generated `meteor_next_pass.csv`, `motor_commands.csv` and
+  `tracking_telemetry.csv` outputs.
+- Tested normal preparation (antenna **READY**) and insufficient preparation
+  (antenna **NOT READY**) scenarios.
+        """
+    )
+    st.caption(
+        "The CSV outputs and lifecycle checks are software-simulation results; "
+        "they are not evidence of physical antenna movement or live RF/image decoding."
+    )
+
 
 def build_pass_data(latitude, longitude, elevation_m, satellite_name, hours, min_elevation, sample_seconds, refresh_tle):
     satellite = tracker.load_satellite(satellite_name, refresh_tle)
@@ -150,4 +187,3 @@ download_b.download_button(
     mime="text/csv",
     use_container_width=True,
 )
-
