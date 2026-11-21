@@ -228,8 +228,14 @@ def build_dashboard(
         current_time
     )
 
+    catalog_name, catalog_entry = tracker.satellite_catalog_entry(satellite_name)
+    tle_epoch = tracker.utc_text(satellite.epoch)
+
     return {
-        "satellite": satellite.name,
+        "satellite": catalog_name if catalog_entry else satellite.name,
+        "norad_id": int(satellite.model.satnum),
+        "orbit_type": catalog_entry["orbit"] if catalog_entry else "Provider catalogue",
+        "tle_epoch": tle_epoch,
         "current_altitude": float(altitude),
         "current_azimuth": float(azimuth),
         "current_range": float(distance),
@@ -272,9 +278,18 @@ with st.sidebar:
 
     st.header("🛰️ Satellite Settings")
 
-    satellite_name = st.text_input(
-        "Satellite",
-        value="METEOR-M 2"
+    satellite_options = tracker.satellite_catalog_names()
+    default_index = satellite_options.index(tracker.DEFAULT_SATELLITE)
+    satellite_name = st.selectbox(
+        "Satellite catalogue",
+        options=satellite_options,
+        index=default_index,
+        help="Select a satellite. Current TLE data is requested from CelesTrak by NORAD catalog number."
+    )
+    selected_entry = tracker.SATELLITE_CATALOG[satellite_name]
+    st.caption(
+        f"NORAD ID: {selected_entry['norad_id']} · "
+        f"Orbit: {selected_entry['orbit']}"
     )
 
     search_hours = st.slider(
@@ -441,6 +456,10 @@ col3.metric(
     f"{result['current_range']:.1f} km"
 )
 
+st.write(f"**NORAD catalog ID:** {result['norad_id']}")
+st.write(f"**Orbit type:** {result['orbit_type']}")
+st.write(f"**TLE epoch (UTC):** {result['tle_epoch']}")
+st.caption("Pass predictions use the TLE epoch shown above. TLEs are time-sensitive; refresh before important observations.")
 st.write(f"**AOS (UTC):** {result['rise_time']}")
 st.write(f"**LOS (UTC):** {result['set_time']}")
 
@@ -854,7 +873,7 @@ download_a, download_b, download_c = st.columns(3)
 download_a.download_button(
     "Download Pass CSV",
     data=pass_csv,
-    file_name="meteor_next_pass.csv",
+    file_name=f"{result['satellite'].lower().replace(' ', '_')}_next_pass.csv",
     mime="text/csv",
     use_container_width=True
 )
