@@ -21,46 +21,19 @@ timescale = loader.timescale()
 # ARGUMENTS
 # --------------------------------------------------
 
-def add_observer_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--latitude",
-        type=float,
-        required=True,
-        help="Degrees north; south is negative."
-    )
-
-    parser.add_argument(
-        "--longitude",
-        type=float,
-        required=True,
-        help="Degrees east; west is negative."
-    )
-
-    parser.add_argument(
-        "--elevation-m",
-        type=float,
-        default=0.0,
-        help="Ground-station elevation above sea level in metres."
-    )
-
-    parser.add_argument(
-        "--satellite",
-        default=DEFAULT_SATELLITE,
-        help=f"CelesTrak satellite name. Default: {DEFAULT_SATELLITE}"
-    )
-
-    parser.add_argument(
-        "--refresh-tle",
-        action="store_true",
-        help="Download fresh orbital elements from CelesTrak."
-    )
+def add_observer_arguments(parser):
+    parser.add_argument("--latitude", type=float, required=True)
+    parser.add_argument("--longitude", type=float, required=True)
+    parser.add_argument("--elevation-m", type=float, default=0.0)
+    parser.add_argument("--satellite", default=DEFAULT_SATELLITE)
+    parser.add_argument("--refresh-tle", action="store_true")
 
 
 # --------------------------------------------------
 # TIME FUNCTIONS
 # --------------------------------------------------
 
-def as_utc_datetime(skyfield_time) -> datetime:
+def as_utc_datetime(skyfield_time):
     value = skyfield_time.utc_datetime()
 
     if value.tzinfo is None:
@@ -69,7 +42,7 @@ def as_utc_datetime(skyfield_time) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-def utc_text(skyfield_time) -> str:
+def utc_text(skyfield_time):
     return (
         as_utc_datetime(skyfield_time)
         .isoformat(timespec="seconds")
@@ -77,7 +50,7 @@ def utc_text(skyfield_time) -> str:
     )
 
 
-def parse_utc(value: str) -> datetime:
+def parse_utc(value):
     try:
         parsed = datetime.fromisoformat(
             value.replace("Z", "+00:00")
@@ -99,21 +72,17 @@ def parse_utc(value: str) -> datetime:
 # SATELLITE FUNCTIONS
 # --------------------------------------------------
 
-def load_satellite(name: str, refresh_tle: bool):
+def load_satellite(name, refresh_tle=False):
     satellites = loader.tle_file(
         TLE_URL,
         reload=refresh_tle
     )
 
-    wanted = name.casefold()
-
     for satellite in satellites:
-        if satellite.name.casefold() == wanted:
+        if satellite.name.casefold() == name.casefold():
             return satellite
 
-    names = ", ".join(
-        satellite.name for satellite in satellites
-    )
+    names = ", ".join(s.name for s in satellites)
 
     raise ValueError(
         f"Satellite '{name}' was not found. "
@@ -121,7 +90,7 @@ def load_satellite(name: str, refresh_tle: bool):
     )
 
 
-def build_observer(args: argparse.Namespace):
+def build_observer(args):
     return wgs84.latlon(
         args.latitude,
         args.longitude,
@@ -133,7 +102,6 @@ def geometry(satellite, observer, time):
     """Return elevation, azimuth and range."""
 
     topocentric = (satellite - observer).at(time)
-
     altitude, azimuth, distance = topocentric.altaz()
 
     return (
@@ -147,8 +115,7 @@ def geometry(satellite, observer, time):
 # POSITION COMMAND
 # --------------------------------------------------
 
-def show_position(args: argparse.Namespace) -> None:
-
+def show_position(args):
     satellite = load_satellite(
         args.satellite,
         args.refresh_tle
@@ -162,29 +129,21 @@ def show_position(args: argparse.Namespace) -> None:
         else timescale.now()
     )
 
-    altitude, azimuth, distance_km = geometry(
-        satellite,
-        observer,
-        time
+    altitude, azimuth, distance = geometry(
+        satellite, observer, time
     )
 
     print(f"Satellite: {satellite.name}")
-
-    print(
-        f"Observer:  {args.latitude:.6f}°, "
-        f"{args.longitude:.6f}°, "
-        f"{args.elevation_m:.1f} m"
-    )
-
-    print(f"Time UTC:  {utc_text(time)}")
-    print(f"Azimuth:   {azimuth:.2f}°")
+    print(f"Observer: {args.latitude}, {args.longitude}")
+    print(f"Time UTC: {utc_text(time)}")
+    print(f"Azimuth: {azimuth:.2f}°")
     print(f"Elevation: {altitude:.2f}°")
-    print(f"Range:     {distance_km:.1f} km")
+    print(f"Range: {distance:.1f} km")
 
     print(
-        "Status:    ABOVE horizon"
+        "Status: ABOVE horizon"
         if altitude >= 0
-        else "Status:    BELOW horizon"
+        else "Status: BELOW horizon"
     )
 
 
@@ -197,9 +156,8 @@ def find_next_complete_pass(
     observer,
     start_time,
     end_time,
-    minimum_elevation: float
+    minimum_elevation
 ):
-
     event_times, events = satellite.find_events(
         observer,
         start_time,
@@ -218,8 +176,8 @@ def find_next_complete_pass(
             return rise_time, event_time
 
     raise RuntimeError(
-        f"No complete pass above {minimum_elevation:.1f}° found. "
-        "Try --hours 48 or lower --min-elevation."
+        f"No complete pass above {minimum_elevation}° found. "
+        "Try a longer search window or lower elevation."
     )
 
 
@@ -233,38 +191,34 @@ def sample_pass(
     rise_time,
     set_time,
     sample_seconds: int,
-    padding_seconds: int
+    padding_seconds: int = 60
 ):
-    """
-    Sample the complete pass with additional data
-    before AOS and after LOS.
-    """
+    """Sample a pass with additional pre-pass and post-pass data."""
 
-    rise_datetime = as_utc_datetime(rise_time)
-    set_datetime = as_utc_datetime(set_time)
+    if sample_seconds <= 0:
+        raise ValueError("Sample interval must be positive.")
 
-    # Extend the sampling window.
-    start = rise_datetime - timedelta(
+    if padding_seconds < 0:
+        raise ValueError("Padding cannot be negative.")
+
+    start = as_utc_datetime(rise_time) - timedelta(
         seconds=padding_seconds
     )
 
-    end = set_datetime + timedelta(
+    end = as_utc_datetime(set_time) + timedelta(
         seconds=padding_seconds
     )
 
-    duration_seconds = (end - start).total_seconds()
+    if end <= start:
+        raise ValueError("Pass end time must be after start time.")
 
-    # Generate regularly spaced timestamps.
+    duration = int((end - start).total_seconds())
+
     datetimes = [
-        start + timedelta(seconds=offset)
-        for offset in range(
-            0,
-            int(duration_seconds) + 1,
-            sample_seconds
-        )
+        start + timedelta(seconds=i)
+        for i in range(0, duration + 1, sample_seconds)
     ]
 
-    # Always include the exact final endpoint.
     if datetimes[-1] < end:
         datetimes.append(end)
 
@@ -276,22 +230,19 @@ def sample_pass(
         sample_times
     )
 
-    return list(
-        zip(
-            datetimes,
-            azimuths,
-            altitudes,
-            ranges
-        )
-    )
+    return list(zip(
+        datetimes,
+        azimuths,
+        altitudes,
+        ranges
+    ))
 
 
 # --------------------------------------------------
 # CSV EXPORT
 # --------------------------------------------------
 
-def export_pass(args: argparse.Namespace) -> None:
-
+def export_pass(args):
     satellite = load_satellite(
         args.satellite,
         args.refresh_tle
@@ -314,7 +265,6 @@ def export_pass(args: argparse.Namespace) -> None:
         args.min_elevation
     )
 
-    # Generate samples including pre-pass and post-pass data.
     rows = sample_pass(
         satellite,
         observer,
@@ -344,43 +294,33 @@ def export_pass(args: argparse.Namespace) -> None:
             "range_km"
         ])
 
-        for timestamp, azimuth, elevation, range_km in rows:
+        for timestamp, azimuth, elevation, distance in rows:
 
             writer.writerow([
                 timestamp.isoformat(
                     timespec="seconds"
                 ).replace("+00:00", "Z"),
-
                 f"{azimuth:.4f}",
                 f"{elevation:.4f}",
-                f"{range_km:.3f}"
+                f"{distance:.3f}"
             ])
 
     peak_elevation = max(
-        float(elevation)
-        for _, _, elevation, _ in rows
+        float(row[2]) for row in rows
     )
 
     print("\n========================================")
     print(" SATELLITE PASS PREDICTION")
     print("========================================")
 
-    print(f"Satellite:          {satellite.name}")
-    print(f"AOS UTC:            {utc_text(rise_time)}")
-    print(f"LOS UTC:            {utc_text(set_time)}")
-
-    print(
-        f"Samples:            {len(rows)} "
-        f"every {args.sample_seconds} seconds"
-    )
-
-    print(
-        f"Buffer before/after: {args.padding_seconds} seconds"
-    )
-
-    print(f"Peak elevation:     {peak_elevation:.2f}°")
-
-    print(f"CSV written to:     {args.csv}")
+    print(f"Satellite: {satellite.name}")
+    print(f"AOS UTC: {utc_text(rise_time)}")
+    print(f"LOS UTC: {utc_text(set_time)}")
+    print(f"Samples: {len(rows)}")
+    print(f"Sample interval: {args.sample_seconds} seconds")
+    print(f"Pre/post buffer: {args.padding_seconds} seconds")
+    print(f"Peak elevation: {peak_elevation:.2f}°")
+    print(f"CSV written to: {args.csv}")
 
     print("========================================\n")
 
@@ -389,13 +329,9 @@ def export_pass(args: argparse.Namespace) -> None:
 # COMMAND LINE INTERFACE
 # --------------------------------------------------
 
-def build_parser() -> argparse.ArgumentParser:
-
+def build_parser():
     parser = argparse.ArgumentParser(
-        description=(
-            "Track a weather satellite and "
-            "export predicted passes."
-        )
+        description="Weather satellite tracking and pass prediction."
     )
 
     commands = parser.add_subparsers(
@@ -403,28 +339,17 @@ def build_parser() -> argparse.ArgumentParser:
         required=True
     )
 
-    # Position command.
-    position = commands.add_parser(
-        "position",
-        help="Print current satellite position."
-    )
-
+    position = commands.add_parser("position")
     add_observer_arguments(position)
 
     position.add_argument(
         "--time-utc",
-        type=parse_utc,
-        help="Optional ISO UTC time; defaults to now."
+        type=parse_utc
     )
 
     position.set_defaults(handler=show_position)
 
-    # Pass command.
-    pass_export = commands.add_parser(
-        "pass",
-        help="Export the next complete satellite pass."
-    )
-
+    pass_export = commands.add_parser("pass")
     add_observer_arguments(pass_export)
 
     pass_export.add_argument(
@@ -448,17 +373,13 @@ def build_parser() -> argparse.ArgumentParser:
     pass_export.add_argument(
         "--padding-seconds",
         type=int,
-        default=60,
-        help=(
-            "Extra sampling time before AOS "
-            "and after LOS. Default: 60 seconds."
-        )
+        default=60
     )
 
     pass_export.add_argument(
         "--csv",
         type=Path,
-        default=Path("output/meteor_next_pass.csv")
+        default=PROJECT_DIR / "output" / "meteor_next_pass.csv"
     )
 
     pass_export.set_defaults(handler=export_pass)
@@ -471,33 +392,32 @@ def build_parser() -> argparse.ArgumentParser:
 # --------------------------------------------------
 
 def main():
-
     parser = build_parser()
-
     args = parser.parse_args()
 
-    if getattr(args, "hours", 1.0) <= 0:
+    if getattr(args, "hours", 1) <= 0:
         parser.error("--hours must be greater than zero.")
 
     if getattr(args, "sample_seconds", 1) <= 0:
-        parser.error("--sample-seconds must be greater than zero.")
+        parser.error("--sample-seconds must be positive.")
 
     if getattr(args, "padding_seconds", 0) < 0:
         parser.error("--padding-seconds cannot be negative.")
 
-    if getattr(args, "min_elevation", 0) < 0:
-        parser.error("--min-elevation cannot be negative.")
+    if not -90 <= args.latitude <= 90:
+        parser.error("Latitude must be between -90 and 90.")
 
-    if getattr(args, "min_elevation", 0) > 90:
-        parser.error("--min-elevation cannot exceed 90.")
+    if not -180 <= args.longitude <= 180:
+        parser.error("Longitude must be between -180 and 180.")
+
+    if getattr(args, "min_elevation", 0) < 0 or getattr(args, "min_elevation", 0) > 90:
+        parser.error("Minimum elevation must be between 0 and 90.")
 
     try:
         args.handler(args)
 
     except (OSError, ValueError, RuntimeError) as error:
-        raise SystemExit(
-            f"Error: {error}"
-        ) from error
+        raise SystemExit(f"Error: {error}") from error
 
 
 if __name__ == "__main__":
