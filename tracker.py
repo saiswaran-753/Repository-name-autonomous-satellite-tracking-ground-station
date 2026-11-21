@@ -5,13 +5,17 @@ import argparse
 import csv
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.request import Request, urlopen
 
-from skyfield.api import Loader, wgs84
+from skyfield.api import EarthSatellite, Loader, wgs84
 
 
 TLE_URL = "https://celestrak.org/NORAD/elements/gp.php?GROUP=weather&FORMAT=tle"
 DEFAULT_SATELLITE = "METEOR-M 2"
 PROJECT_DIR = Path(__file__).resolve().parent
+
+FALLBACK_TLE = PROJECT_DIR / "satellite_data" / "meteor_m_2.tle"
+TLE_TIMEOUT = 10
 
 loader = Loader(str(PROJECT_DIR / "data"))
 timescale = loader.timescale()
@@ -69,25 +73,109 @@ def parse_utc(value):
 
 
 # --------------------------------------------------
+# TLE FUNCTIONS
+# --------------------------------------------------
+
+def parse_tle_text(text):
+    """Convert three-line TLE records into Skyfield satellites."""
+
+    lines = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip()
+    ]
+
+    satellites = []
+
+    for index in range(len(lines) - 2):
+        name = lines[index]
+        line1 = lines[index + 1]
+        line2 = lines[index + 2]
+
+        if line1.startswith("1 ") and line2.startswith("2 "):
+            satellite = EarthSatellite(
+                line1,
+                line2,
+                name,
+                timescale
+            )
+            satellites.append(satellite)
+
+    return satellites
+
+
+def load_remote_satellites():
+    """Download current TLE data with a network timeout."""
+
+    request = Request(
+        TLE_URL,
+        headers={"User-Agent": "SatelliteTrackingGroundStation/1.0"}
+    )
+
+    with urlopen(request, timeout=TLE_TIMEOUT) as response:
+        tle_text = response.read().decode("utf-8")
+
+    satellites = parse_tle_text(tle_text)
+
+    if not satellites:
+        raise ValueError("CelesTrak returned no valid TLE records.")
+
+    return satellites
+
+
+def load_fallback_satellite(name):
+    """Load the bundled METEOR-M 2 TLE file."""
+
+    if not FALLBACK_TLE.exists():
+        raise FileNotFoundError(
+            f"Fallback TLE file not found: {FALLBACK_TLE}"
+        )
+
+    tle_text = FALLBACK_TLE.read_text(encoding="utf-8")
+    satellites = parse_tle_text(tle_text)
+
+    for satellite in satellites:
+        if satellite.name.casefold() == name.casefold():
+            print(
+                "WARNING: Using bundled fallback TLE. "
+                "Orbital predictions may be less accurate."
+            )
+            return satellite
+
+    raise ValueError(
+        f"Satellite '{name}' was not found in the fallback TLE."
+    )
+
+
+# --------------------------------------------------
 # SATELLITE FUNCTIONS
 # --------------------------------------------------
 
 def load_satellite(name, refresh_tle=False):
-    satellites = loader.tle_file(
-        TLE_URL,
-        reload=refresh_tle
-    )
+    """
+    Load satellite data from CelesTrak.
 
-    for satellite in satellites:
-        if satellite.name.casefold() == name.casefold():
-            return satellite
+    If the remote request fails or the requested satellite
+    is unavailable, use the bundled local TLE.
+    """
 
-    names = ", ".join(s.name for s in satellites)
+    try:
+        satellites = load_remote_satellites()
 
-    raise ValueError(
-        f"Satellite '{name}' was not found. "
-        f"Available names: {names}"
-    )
+        for satellite in satellites:
+            if satellite.name.casefold() == name.casefold():
+                print("Satellite data source: CelesTrak")
+                return satellite
+
+        raise ValueError(
+            f"Satellite '{name}' was not found in CelesTrak."
+        )
+
+    except Exception as error:
+        print(f"CelesTrak unavailable: {error}")
+        print("Trying local fallback TLE...")
+
+        return load_fallback_satellite(name)
 
 
 def build_observer(args):
@@ -410,7 +498,10 @@ def main():
     if not -180 <= args.longitude <= 180:
         parser.error("Longitude must be between -180 and 180.")
 
-    if getattr(args, "min_elevation", 0) < 0 or getattr(args, "min_elevation", 0) > 90:
+    if (
+        getattr(args, "min_elevation", 0) < 0
+        or getattr(args, "min_elevation", 0) > 90
+    ):
         parser.error("Minimum elevation must be between 0 and 90.")
 
     try:
