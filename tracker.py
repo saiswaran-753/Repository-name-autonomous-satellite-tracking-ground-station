@@ -11,7 +11,29 @@ from skyfield.api import EarthSatellite, Loader, wgs84
 
 
 TLE_URL = "https://celestrak.org/NORAD/elements/gp.php?GROUP=weather&FORMAT=tle"
+CELESTRAK_CATNR_URL = "https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=tle"
 DEFAULT_SATELLITE = "METEOR-M 2"
+
+SATELLITE_CATALOG = {
+    "METEOR-M 2": {"norad_id": 40069, "orbit": "Polar LEO"},
+    "METEOR-M 2-3": {"norad_id": 57166, "orbit": "Polar LEO"},
+    "METEOR-M 2-4": {"norad_id": 59051, "orbit": "Polar LEO"},
+    "INSAT-3DS": {"norad_id": 58990, "orbit": "Geostationary"},
+    "GOES-19": {"norad_id": 60133, "orbit": "Geostationary"},
+    "NOAA-20": {"norad_id": 43013, "orbit": "Polar LEO"},
+    "NOAA-21": {"norad_id": 54234, "orbit": "Polar LEO"},
+}
+
+def satellite_catalog_names():
+    return list(SATELLITE_CATALOG)
+
+def satellite_catalog_entry(name):
+    normalized = "".join(c for c in name.casefold() if c.isalnum())
+    for display_name, entry in SATELLITE_CATALOG.items():
+        candidate = "".join(c for c in display_name.casefold() if c.isalnum())
+        if normalized == candidate:
+            return display_name, entry
+    return name, None
 PROJECT_DIR = Path(__file__).resolve().parent
 
 FALLBACK_TLE = PROJECT_DIR / "satellite_data" / "meteor_m_2.tle"
@@ -104,11 +126,12 @@ def parse_tle_text(text):
     return satellites
 
 
-def load_remote_satellites():
-    """Download current TLE data with a network timeout."""
+def load_remote_satellites(norad_id=None):
+    """Download current TLE data, optionally for one NORAD catalog number."""
 
+    url = CELESTRAK_CATNR_URL.format(norad_id=int(norad_id)) if norad_id is not None else TLE_URL
     request = Request(
-        TLE_URL,
+        url,
         headers={"User-Agent": "SatelliteTrackingGroundStation/1.0"}
     )
 
@@ -152,30 +175,39 @@ def load_fallback_satellite(name):
 # --------------------------------------------------
 
 def load_satellite(name, refresh_tle=False):
-    """
-    Load satellite data from CelesTrak.
-
-    If the remote request fails or the requested satellite
-    is unavailable, use the bundled local TLE.
-    """
+    """Load current CelesTrak TLE data for a selected catalogue satellite."""
+    display_name, entry = satellite_catalog_entry(name)
 
     try:
+        if entry:
+            satellites = load_remote_satellites(entry["norad_id"])
+            satellite = satellites[0]
+            actual_id = int(satellite.model.satnum)
+            if actual_id != int(entry["norad_id"]):
+                raise ValueError(
+                    f"CelesTrak returned NORAD {actual_id}; expected {entry['norad_id']}."
+                )
+            print(f"Satellite data source: CelesTrak (NORAD {entry['norad_id']})")
+            return satellite
+
         satellites = load_remote_satellites()
-
+        normalized = "".join(c for c in name.casefold() if c.isalnum())
         for satellite in satellites:
-            if satellite.name.casefold() == name.casefold():
-                print("Satellite data source: CelesTrak")
+            candidate = "".join(c for c in satellite.name.casefold() if c.isalnum())
+            if candidate == normalized:
+                print("Satellite data source: CelesTrak weather group")
                 return satellite
-
-        raise ValueError(
-            f"Satellite '{name}' was not found in CelesTrak."
-        )
+        raise ValueError(f"Satellite '{name}' was not found in CelesTrak.")
 
     except Exception as error:
         print(f"CelesTrak unavailable: {error}")
-        print("Trying local fallback TLE...")
-
-        return load_fallback_satellite(name)
+        if display_name == DEFAULT_SATELLITE:
+            print("Trying local METEOR-M 2 fallback TLE...")
+            return load_fallback_satellite(DEFAULT_SATELLITE)
+        raise RuntimeError(
+            f"Could not retrieve current TLE for {display_name} from CelesTrak. "
+            "Check the network and try again."
+        ) from error
 
 
 def build_observer(args):
